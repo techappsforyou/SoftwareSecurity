@@ -1,49 +1,178 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Angle Privacy — Stable & Smooth</title>
+<title>Software Security — Angle Privacy Demo</title>
 <style>
   :root{
-    /* Тонкая настройка под видео */
-    --fadeMs: 700ms;                         /* одинаковая плавность туда/обратно */
-    --ease: cubic-bezier(.18,.88,.25,1);     /* характер кривой */
-    --mask: rgba(0,0,0,1);                   /* полная темнота */
+    /* Visual theme */
+    --bg:#0b1020;
+    --card:#0f1528;
+    --muted:#98a2b3;
+    --border:#1f2942;
+    --accent1:#6f68ff;
+    --accent2:#8c4dff;
+    --good:#16a34a;
+
+    /* Overlay anim (TECH — do not change unless needed) */
+    --fadeMs: 700ms;
+    --ease: cubic-bezier(.18,.88,.25,1);
+    --mask: rgba(0,0,0,1);
   }
 
   *{ box-sizing:border-box }
   html,body{ height:100%; margin:0 }
   body{
     font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    background:#0b1020; color:#e7ecf3;
-    display:grid; place-items:center; padding:28px;
-    -webkit-tap-highlight-color: transparent;
+    color:#e7ecf3;
+    background:
+      radial-gradient(1200px 800px at 10% -10%, #1a2250 0%, rgba(26,34,80,0) 60%),
+      radial-gradient(900px 700px at 110% 10%, #2a1a50 0%, rgba(42,26,80,0) 55%),
+      linear-gradient(180deg, #0b1020 0%, #070b16 100%);
   }
 
-  .card{
-    width:min(460px,92vw);
-    border:1px solid #1f2942;
-    background: linear-gradient(180deg,#141b33 0%, #11162a 100%);
-    border-radius:22px; padding:26px 22px 28px;
-    box-shadow: 0 20px 60px rgba(0,0,0,.45);
-    text-align:center;
+  /* Header */
+  .header{
+    position: sticky; top: 0; z-index: 5;
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    background: rgba(7,11,22,.45);
+    border-bottom: 1px solid rgba(255,255,255,.06);
   }
-  h1{ margin:0 0 16px; font-size:22px; font-weight:800 }
+  .header__inner{
+    max-width: 960px; margin: 0 auto;
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 14px 18px;
+  }
+  .brand{
+    font-weight: 800; letter-spacing: .2px;
+    font-size: 18px;
+  }
+  .badge{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:6px 10px; border-radius:999px;
+    border:1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+    font-size:12px; color:#cbd5e1;
+  }
+  .dot{
+    width:8px;height:8px;border-radius:999px;background:#6b7280;
+  }
+  .dot--active{ background: var(--good); box-shadow: 0 0 10px rgba(22,163,74,.6); }
+
+  /* Page container */
+  .wrap{
+    min-height: calc(100% - 56px);
+    display:grid; place-items:center;
+    padding: 32px 18px 44px;
+  }
+  .card{
+    width:min(820px, 96vw);
+    border:1px solid var(--border);
+    background: linear-gradient(180deg, #121936 0%, var(--card) 100%);
+    border-radius: 24px;
+    padding: 26px 22px;
+    box-shadow: 0 30px 80px rgba(0,0,0,.5);
+  }
+
+  /* Title */
+  .title{
+    font-size: 24px; font-weight: 800; margin: 0 0 18px; text-align:center;
+  }
+  .sub{
+    text-align:center; color: var(--muted); margin: -4px 0 18px; font-size: 14px;
+  }
+
+  /* Options (visual only) */
+  .options{
+    display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin-bottom: 16px;
+  }
+  .option{
+    user-select:none; pointer-events:none;
+    border:1px solid var(--border);
+    background: #0d1326;
+    border-radius: 14px;
+    padding: 12px 14px;
+    display:flex; align-items:center; gap:10px;
+    color:#dbe3f1;
+  }
+  .option--active{
+    background: linear-gradient(90deg, rgba(111,104,255,.18), rgba(140,77,255,.18));
+    border-color: rgba(140,77,255,.45);
+    box-shadow: inset 0 0 0 1px rgba(140,77,255,.2), 0 0 32px rgba(140,77,255,.25);
+  }
+  .option__tag{
+    font-size:11px; color:#a3aed1; margin-left:auto; opacity:.9;
+  }
+
+  /* Visual slider (decorative) */
+  .slider{
+    margin: 10px 0 4px;
+    background:#0b1228; border:1px solid var(--border);
+    border-radius: 16px; padding: 18px;
+  }
+  .slider__label{
+    display:flex; align-items:center; justify-content:space-between;
+    font-size: 12px; color: var(--muted); margin-bottom: 10px;
+  }
+  .slider__track{
+    position: relative; height: 10px; border-radius: 999px;
+    background: linear-gradient(90deg, #0e1224 0%, #141b33 100%);
+    overflow:hidden;
+  }
+  .slider__fill{
+    position:absolute; left:0; top:0; bottom:0; width: 68%;
+    background: linear-gradient(90deg, var(--accent1), var(--accent2));
+  }
+  .slider__thumb{
+    position:absolute; top:50%; transform:translateY(-50%); left: 68%;
+    width: 28px; height: 28px; border-radius: 999px;
+    background: radial-gradient(circle at 35% 30%, #ffd68a 0%, #ff9b57 50%, #ff713f 100%);
+    border:1px solid rgba(255,255,255,.18);
+    box-shadow: 0 6px 16px rgba(255,113,63,.35), 0 0 26px rgba(255,113,63,.28);
+    pointer-events:none; /* decorative */
+  }
+
+  /* CTA row */
+  .actions{
+    display:flex; align-items:center; gap:12px; margin-top: 16px;
+  }
   .btn{
     -webkit-appearance:none; appearance:none; border:0; cursor:pointer;
-    width:100%; padding:14px 18px; border-radius:16px; font-weight:800; letter-spacing:.4px;
-    color:#fff; background: linear-gradient(90deg,#6f68ff,#8c4dff);
+    padding:14px 18px; border-radius:16px; font-weight:800; letter-spacing:.4px; color:#fff;
+    background: linear-gradient(90deg, var(--accent1), var(--accent2));
     box-shadow: 0 0 32px rgba(143,109,255,.35);
   }
   .btn:active{ transform: translateY(1px) }
 
-  /* Оверлей: без display:none, только opacity/visibility → никаких рывков */
+  .status{
+    display:flex; align-items:center; gap:10px;
+    padding:10px 12px; border-radius:12px; border:1px solid rgba(255,255,255,.08);
+    background: rgba(255,255,255,.04);
+    font-size: 13px; color:#cbd5e1;
+  }
+  .status__dot{
+    width:10px; height:10px; border-radius:999px; background:#6b7280;
+  }
+  .status__dot--calib{
+    background:#f59e0b; box-shadow: 0 0 12px rgba(245,158,11,.6);
+  }
+  .status__dot--active{
+    background: var(--good); box-shadow: 0 0 12px rgba(22,163,74,.6);
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pulse{
+    0%{ transform:scale(1) } 50%{ transform:scale(1.08) } 100%{ transform:scale(1) }
+  }
+
+  /* --------- TECH OVERLAY (unchanged) --------- */
   .overlay{
     position:fixed; inset:0; z-index:9999;
     background: var(--mask);
     opacity:0; visibility:hidden;
-    pointer-events:none;                /* клики проходят когда светло */
+    pointer-events:none;
     transition: opacity var(--fadeMs) var(--ease), visibility 0s linear var(--fadeMs);
     will-change: opacity;
   }
@@ -55,35 +184,96 @@
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Angle Privacy</h1>
-    <button class="btn" id="activate">GET INSIGHTS</button>
-  </div>
 
+  <!-- Header -->
+  <header class="header">
+    <div class="header__inner">
+      <div class="brand">Software Security</div>
+      <div class="badge">
+        <span id="hdrDot" class="dot"></span>
+        <span id="hdrText">Idle</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <h1 class="title">Angle Privacy</h1>
+      <p class="sub">Demonstration of side-angle screen darkening.</p>
+
+      <!-- Visual options -->
+      <div class="options" aria-label="Modes (visual only)">
+        <div class="option option--active" aria-current="true">
+          <!-- check icon -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 7L10 17l-6-6" stroke="#9affc9" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Private mode
+          <span class="option__tag">selected</span>
+        </div>
+        <div class="option" aria-disabled="true">
+          <!-- shield icon -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" stroke="#a6b0c3" stroke-width="2"/>
+          </svg>
+          Shoulder guard
+          <span class="option__tag">visual</span>
+        </div>
+        <div class="option" aria-disabled="true">
+          <!-- eye-off icon -->
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M3 3l18 18" stroke="#a6b0c3" stroke-width="2" stroke-linecap="round"/>
+            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" stroke="#a6b0c3" stroke-width="2"/>
+          </svg>
+          Data masking
+          <span class="option__tag">visual</span>
+        </div>
+      </div>
+
+      <!-- Visual darkness slider -->
+      <div class="slider" aria-hidden="true">
+        <div class="slider__label">
+          <span>Darkness intensity</span>
+          <span>68%</span>
+        </div>
+        <div class="slider__track">
+          <div class="slider__fill"></div>
+          <div class="slider__thumb"></div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="actions">
+        <button class="btn" id="activate">GET INSIGHTS</button>
+        <div class="status" aria-live="polite" aria-atomic="true">
+          <span id="stDot" class="status__dot"></span>
+          <span id="stText">Ready</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- TECH overlay (unchanged) -->
   <div class="overlay" id="overlay" aria-hidden="true"></div>
 
 <script>
+  /* ===================== TECH: Angle Privacy — Stable & Smooth =====================
+     This block is IDENTICAL to the previous working version (do not change).
+  */
   const overlay = document.getElementById('overlay');
   const btn = document.getElementById('activate');
 
-  /* ===== Параметры поведения =====
-     THRESHOLD_DEG — один порог для входа/выхода (симметрично).
-     HYST_DEG      — крошечный гистерезис, чтобы не дрожало на границе.
-     CALIB_MS      — короткая калибровка (усреднение) после клика.
-  */
-  const THRESHOLD_DEG = 24;   // начни темнить около 24°
-  const HYST_DEG      = 2;    // на 2° раньше возвращаем яркость (защита от дрожи)
-  const CALIB_MS      = 300;  // 300 мс собираем базу «как держишь сейчас»
+  const THRESHOLD_DEG = 24;   // symmetric trigger angle
+  const HYST_DEG      = 2;    // tiny hysteresis
+  const CALIB_MS      = 300;  // calibration window
 
   let activated = false;
   let sensorsOn = false;
 
-  // База «прямо» (усреднённая по первым событиям)
   let baseG = 0, baseB = 0;
   let calibStart = 0, calibCount = 0;
   let calibrating = false;
 
-  // Состояние слоя и защита от повторных операций
   let isDark = false;
 
   btn.addEventListener('click', async () => {
@@ -93,12 +283,10 @@
   });
 
   function startCalibration(){
-    // Сбрасываем базу и в течение CALIB_MS усредняем beta/gamma в абсолютных значениях
     baseG = 0; baseB = 0; calibCount = 0;
     calibrating = true;
     calibStart = performance.now();
   }
-
   function maybeFinishCalibration(){
     if (!calibrating) return;
     if (performance.now() - calibStart >= CALIB_MS && calibCount > 0){
@@ -107,7 +295,6 @@
       calibrating = false;
     }
   }
-
   function setOverlay(on){
     if (on && !isDark){
       isDark = true;
@@ -117,15 +304,13 @@
       overlay.classList.remove('on');
     }
   }
-
   function deltaFromBase(beta, gamma){
     const g = Math.abs(gamma ?? 0);
     const b = Math.abs(beta  ?? 0);
     const dG = Math.abs(g - baseG);
     const dB = Math.abs(b - baseB);
-    return Math.max(dG, dB); // берём «наибольший уход» — боковой или вперёд/назад
+    return Math.max(dG, dB);
   }
-
   async function ensureSensors(){
     if (sensorsOn) return;
     try {
@@ -134,7 +319,7 @@
         const res = await DeviceOrientationEvent.requestPermission();
         if (res !== 'granted') return;
       }
-    } catch(e){/* noop */}
+    } catch(e){}
 
     window.addEventListener('deviceorientation', (e) => {
       if (!activated) return;
@@ -142,18 +327,15 @@
       const { beta, gamma } = e;
       if (beta == null && gamma == null) return;
 
-      // Во время калибровки аккумулируем «как держишь прямо»
       if (calibrating){
         baseG += Math.abs(gamma ?? 0);
         baseB += Math.abs(beta  ?? 0);
         calibCount++;
         maybeFinishCalibration();
-        return; // пока база собирается — не дёргаем слой
+        return;
       }
 
       const delta = deltaFromBase(beta, gamma);
-
-      // Симметричная логика + маленький гистерезис
       if (!isDark && delta >= (THRESHOLD_DEG)) {
         setOverlay(true);
       } else if (isDark && delta <= (THRESHOLD_DEG - HYST_DEG)) {
@@ -163,6 +345,40 @@
 
     sensorsOn = true;
   }
+</script>
+
+<script>
+  /* ===================== UI sugar (does not touch tech logic) ===================== */
+  const stDot = document.getElementById('stDot');
+  const stText = document.getElementById('stText');
+  const hdrDot = document.getElementById('hdrDot');
+  const hdrText = document.getElementById('hdrText');
+  const activateBtn = document.getElementById('activate');
+
+  function setStatus(state){
+    // states: idle | calibrating | active
+    stDot.className = 'status__dot';
+    hdrDot.className = 'dot';
+    if (state === 'calibrating'){
+      stDot.classList.add('status__dot--calib');
+      hdrDot.classList.add('dot--active'); // small green on header too
+      stText.textContent = 'Calibrating…';
+      hdrText.textContent = 'Calibrating';
+    } else if (state === 'active'){
+      stDot.classList.add('status__dot--active');
+      hdrDot.classList.add('dot--active');
+      stText.textContent = 'Active — tilt your phone';
+      hdrText.textContent = 'Active';
+    } else {
+      stText.textContent = 'Ready';
+      hdrText.textContent = 'Idle';
+    }
+  }
+
+  activateBtn.addEventListener('click', () => {
+    setStatus('calibrating');
+    setTimeout(() => setStatus('active'), 320); // matches CALIB_MS feel
+  });
 </script>
 </body>
 </html>
