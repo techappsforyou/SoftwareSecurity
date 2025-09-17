@@ -3,17 +3,17 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Angle Privacy — Snap Back to Bright</title>
+<title>Angle Privacy — Smooth In & Out</title>
 <style>
   :root{
-    /* можно подстроить эти параметры под ролик/ощущение */
-    --dark: rgba(0,0,0,1);       /* ПОЛНОЕ затемнение */
-    --fadeInMs: 700ms;           /* плавный, “масляный” вход */
-    --fadeOutMs: 160ms;          /* обычный выход */
-    --fadeOutFastMs: 110ms;      /* быстрый выход при возврате в “те же градусы” */
-    --easeIn: cubic-bezier(.18,.88,.25,1);
-    --easeOut: cubic-bezier(.3,.1,.3,1);
+    /* Параметры плавности */
+    --dark: rgba(0,0,0,1);          /* Полное затемнение */
+    --fadeInMs: 700ms;              /* Вход в темноту (плавный) */
+    --fadeOutMs: 700ms;             /* Обычный выход — такой же плавный */
+    --fadeOutFastMs: 520ms;         /* Быстрый (но тоже плавный) выход при «те же градусы» */
+    --easeInOut: cubic-bezier(.18,.88,.25,1); /* та же кривая для обоих направлений */
   }
+
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
   body{
@@ -22,6 +22,7 @@
     display:grid; place-items:center; padding:28px;
     -webkit-tap-highlight-color: transparent;
   }
+
   .card{
     width:min(460px,92vw);
     border:1px solid #1f2942;
@@ -40,7 +41,7 @@
   }
   .btn:active{ transform: translateY(1px) }
 
-  /* Чистый чёрный оверлей — без текста/вспышек/блюра, чтобы не просвечивало */
+  /* Полностью чёрный оверлей — без текста/блюра, чтобы не «просвечивало» */
   .overlay{
     position:fixed; inset:0; display:none; z-index:9999;
     background: rgba(0,0,0,0);
@@ -49,13 +50,14 @@
   }
   .overlay.visible{ display:block; }
 
+  /* Ключи: используем одну и ту же кривую для «туда и обратно» */
   @keyframes fadeToDark { from { background: rgba(0,0,0,0); } to { background: var(--dark); } }
   @keyframes darkToClear{ from { background: var(--dark); }    to { background: rgba(0,0,0,0); } }
 
-  .overlay.fade-in        { animation: fadeToDark var(--fadeInMs) var(--easeIn) forwards; }
+  .overlay.fade-in        { animation: fadeToDark var(--fadeInMs) var(--easeInOut) forwards; }
   .overlay.hold           { background: var(--dark); }
-  .overlay.fade-out       { animation: darkToClear var(--fadeOutMs) var(--easeOut) forwards; }
-  .overlay.fade-out-fast  { animation: darkToClear var(--fadeOutFastMs) linear forwards; }
+  .overlay.fade-out       { animation: darkToClear var(--fadeOutMs) var(--easeInOut) forwards; }
+  .overlay.fade-out-fast  { animation: darkToClear var(--fadeOutFastMs) var(--easeInOut) forwards; }
 </style>
 </head>
 <body>
@@ -70,27 +72,25 @@
   const overlay = document.getElementById('overlay');
   const btn = document.getElementById('activate');
 
-  /* === Настройки поведения ===
-     ENTER_DEG: при каком Δугле от “прямого взгляда” начинать затемнять.
-     RETURN_TOL: окно “те же градусы” вокруг базовой позы — быстрый выход.
-     EXIT_DEG: обычный порог выхода, если не попали прямо в RETURN_TOL.
+  /* === Пороговая логика ===
+     ENTER_DEG — когда начинаем темнить (относительно калибровки).
+     RETURN_TOL — «те же градусы» → ранний, но ПЛАВНЫЙ выход.
+     EXIT_DEG — обычный порог выхода, если не попали в RETURN_TOL.
   */
-  const ENTER_DEG   = 24;  // старт затемнения раньше (можно 20–28)
-  const RETURN_TOL  = 8;   // “вернулся в те же градусы” → быстрый выход
-  const EXIT_DEG    = 14;  // обычный ранний выход (гистерезис)
-  const SMOOTH_ALPHA = 0.22; // сглаживание датчика (0..1) — больше = быстрее
-
-  // минимальная защита от дрожи, чтобы не мигало при «границе»
-  const MIN_HOLD_MS = 80;
+  const ENTER_DEG    = 24;   // ранний вход в темноту
+  const RETURN_TOL   = 8;    // зона «вернулся в те же градусы»
+  const EXIT_DEG     = 14;   // обычный ранний выход
+  const SMOOTH_ALPHA = 0.20; // сглаживание датчика (0..1)
+  const MIN_HOLD_MS  = 80;   // анти-дребезг, чтобы не мигало на границе
 
   let activated = false;
   let usingSensors = false;
 
-  // калибровка “прямого взгляда”
-  let baselineGamma = 0;     // базовый |gamma| при нажатии кнопки
-  let needCalibrate = false; // взять baseline с первого event после активации
+  // калибровка «прямого взгляда»
+  let baselineGamma = 0;
+  let needCalibrate = false;
 
-  // сглаженное “насколько мы сбоку” относительно базового
+  // сглаженный модуль Δугла (|gamma - baseline|)
   let gFiltered = 0;
 
   // состояние затемнения
@@ -100,16 +100,15 @@
 
   btn.addEventListener('click', async () => {
     activated = true;
-    needCalibrate = true;     // возьмём базовый угол на первом событии
+    needCalibrate = true;            // возьмём baseline с первого события
     await enableMotion();
   });
 
-  /* === Логика анимаций === */
+  /* === Анимации === */
   function beginDark(){
     clearTimeout(hideTimer);
-    // перезапуск входной анимации
-    overlay.className = 'overlay visible';
-    void overlay.offsetWidth;
+    overlay.className = 'overlay visible'; // сброс
+    void overlay.offsetWidth;              // reflow для перезапуска
     overlay.classList.add('fade-in');
     isDark = true;
     holdUntil = Date.now() + MIN_HOLD_MS;
@@ -141,18 +140,13 @@
 
   /* === Помощники === */
   const abs = Math.abs;
-
   function deltaFromBaseline(rawGamma){
     const gAbs = abs(rawGamma ?? 0);
     return abs(gAbs - baselineGamma);
   }
+  function inReturnZone(deltaRaw){ return deltaRaw <= RETURN_TOL; }
 
-  function inReturnZone(deltaRaw){
-    // «почти те же градусы», без сглаживания — чтобы выход был мгновенный
-    return deltaRaw <= RETURN_TOL;
-  }
-
-  /* === Фолбэк на системную ориентацию (если вдруг датчиков нет) === */
+  /* Фолбэк на системную смену ориентации — не обязателен, но пусть будет */
   if (window.matchMedia){
     const mql = matchMedia('(orientation: landscape)');
     mql.addEventListener?.('change', () => {
@@ -178,28 +172,27 @@
       const rawGamma = e.gamma;
       const deltaRaw = deltaFromBaseline(rawGamma);
 
-      // первая калибровка под твоё «прямо»
+      // первичная калибровка «прямо»
       if (needCalibrate){
         baselineGamma = abs(rawGamma ?? 0);
         needCalibrate = false;
         gFiltered = 0;
       }
 
-      // плавное сглаживание для входа/выхода по порогам
+      // сглаживание, чтобы анимации вход/выход были спокойные
       gFiltered = SMOOTH_ALPHA * deltaRaw + (1 - SMOOTH_ALPHA) * gFiltered;
 
-      // 1) Приоритет: вернулся “в те же градусы” → быстрый выход
+      // приоритетный ранний выход, если вернулся почти в ту же позу
       if (isDark && inReturnZone(deltaRaw)){
-        endDark(true); // очень быстрый выход
+        endDark(true); // быстрый, но ПЛАВНЫЙ выход (520ms, та же кривая)
         return;
       }
 
-      // 2) Обычная логика с гистерезисом и мягкими порогами
       if (!isDark){
         if (gFiltered >= ENTER_DEG) beginDark();
-      }else{
-        holdUntil = Date.now() + MIN_HOLD_MS; // защита от дрожи
-        if (gFiltered <= EXIT_DEG) endDark(false);
+      } else {
+        holdUntil = Date.now() + MIN_HOLD_MS; // анти-дребезг
+        if (gFiltered <= EXIT_DEG) endDark(false); // обычный плавный выход (700ms)
       }
     }, { passive:true });
 
