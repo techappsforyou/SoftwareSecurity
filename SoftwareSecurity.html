@@ -3,14 +3,18 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Private Mode — Early Fade + Repeat</title>
+<title>Private Mode — Early & Smooth Repeat</title>
 <style>
   :root{
     --bg:#0b1020; --card:#11162a; --cardBorder:#1f2942;
     --cta1:#6f68ff; --cta2:#8c4dff;
-    --dark: rgba(0,0,0,.94); /* конечная темнота */
-    --fadeInMs: 650ms;
-    --fadeOutMs: 280ms;
+
+    /* финальная темнота и тайминги */
+    --dark: rgba(0,0,0,.96);
+    --fadeInMs: 1000ms;                     /* плавнее как в ролике */
+    --fadeOutMs: 320ms;
+    --easeIn: cubic-bezier(.22,.61,.36,1);  /* мягкий ease-out */
+    --easeOut: cubic-bezier(.4,0,.2,1);     /* стандартный material ease-in-out */
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -41,12 +45,13 @@
         filter: drop-shadow(0 0 10px rgba(120,255,180,.45));}
   .tick.show{opacity:1;transform:scale(1) rotate(0)}
 
-  /* Пустой тёмный оверлей — без текста/вспышек */
+  /* Чистый тёмный оверлей — без текста/вспышек */
   .overlay{
     position:fixed; inset:0; display:none; z-index:9999;
     align-items:center; justify-content:center;
     background: rgba(0,0,0,0);
-    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    will-change: background;
   }
   @keyframes fadeToDark {
     0%   { background: rgba(0,0,0,0); }
@@ -56,9 +61,9 @@
     0%   { background: var(--dark); }
     100% { background: rgba(0,0,0,0); }
   }
-  .overlay.fade-in  { display:flex; animation: fadeToDark var(--fadeInMs) ease forwards; }
+  .overlay.fade-in  { display:flex; animation: fadeToDark var(--fadeInMs) var(--easeIn) forwards; }
   .overlay.hold     { display:flex; background: var(--dark); }
-  .overlay.fade-out { display:flex; animation: darkToClear var(--fadeOutMs) ease forwards; }
+  .overlay.fade-out { display:flex; animation: darkToClear var(--fadeOutMs) var(--easeOut) forwards; }
 </style>
 </head>
 <body>
@@ -82,50 +87,54 @@
   const tick    = document.getElementById('tick');
   const overlay = document.getElementById('overlay');
 
-  let activated = false;
-  let isDark = false;
+  let activated = false;    // включаем логику после нажатия кнопки (как в ролике)
+  let isDark    = false;    // сейчас затемнено?
   let usingSensors = false;
-  let holdUntil = 0;
-  let hideTimeout = null;
 
-  /* === Настройки поведения === */
-  const ENTER_DEG = 35;      // включаем затемнение уже с ~35° бокового наклона
-  const EXIT_DEG  = 20;      // выключаем, когда вернёмся ниже ~20° (гистерезис)
-  const MIN_HOLD_MS = 1800;  // минимум как долго держим темноту
-  const SMOOTH_ALPHA = 0.15; // сглаживание датчиков (0..1), больше = быстрее реагирует
+  /* === Параметры поведения === */
+  const ENTER_DEG = 20;     // включить затемнение при ~20°
+  const EXIT_DEG  = 12;     // выключить, когда вернулись ниже ~12° (гистерезис)
+  const MIN_HOLD_MS = 2200; // минимум, сколько держим темноту каждый раз
+  const SMOOTH_ALPHA = 0.14;// сглаживание датчиков (0..1): меньше = плавнее
 
-  let gFiltered = 0;         // сглаженное |gamma|
+  let gFiltered = 0;        // сглаженный |gamma|
+  let holdUntil = 0;        // время (ms), до которого не убирать темноту
+  let hideTimeout = null;   // таймер отложенного снятия
+  let lastBelowExit = true; // были ли в «стартовой зоне» (ниже EXIT)?
 
   ctaBtn.addEventListener('click', async () => {
     tick.classList.add('show');
     activated = true;
-    await enableMotion();           // важно для iOS
-    // если уже наклонён — сразу включим
-    if (isApproxLandscape()) beginDark();
+    await enableMotion();                // важно для iOS
+    // если уже наклонён — сразу затемнить
+    if (approxLandscape()) beginDark();
   });
 
+  /* --- Затемнение / возврат --- */
   function beginDark(){
-    if (isDark) {                  // если уже тёмно — просто продлим «холд»
-      holdUntil = Date.now() + MIN_HOLD_MS;
-      return;
-    }
+    // разрешаем срабатывать КАЖДЫЙ раз при входе из «стартовой зоны»
     clearTimeout(hideTimeout);
-    overlay.classList.remove('fade-out','hold');
+
+    // если прямо сейчас идёт fade-out — прервём его и снова в тьму
+    overlay.classList.remove('fade-out');
+    // перезапуск анимации: снять и снова добавить класс (форсим reflow)
+    overlay.classList.remove('fade-in','hold');
+    void overlay.offsetWidth; // reflow hack
     overlay.classList.add('fade-in');
+
     holdUntil = Date.now() + MIN_HOLD_MS;
     isDark = true;
 
     overlay.addEventListener('animationend', function onEnd(e){
       if (e.animationName === 'fadeToDark'){
         overlay.classList.remove('fade-in');
-        overlay.classList.add('hold'); // остаёмся тёмными
+        overlay.classList.add('hold');
       }
       overlay.removeEventListener('animationend', onEnd);
     });
   }
 
   function endDark(){
-    if (!isDark) return;
     const left = holdUntil - Date.now();
     if (left > 0){
       clearTimeout(hideTimeout);
@@ -144,22 +153,29 @@
     });
   }
 
-  /* --- Определение «достаточного» наклона --- */
-  function isApproxLandscape(){
-    // основной критерий — боковой наклон (gamma)
+  /* --- Логика «каждый раз от стартовой точки» --- */
+  function approxLandscape(){
     return gFiltered >= ENTER_DEG;
   }
 
-  // Фолбэк на смену системной ориентации (сработает позднее, чем датчики)
+  // Фолбэк по системной ориентации (если замок ориентации выключен)
   if (window.matchMedia){
     const mql = matchMedia('(orientation: landscape)');
     mql.addEventListener?.('change', () => {
       if (!activated) return;
-      if (mql.matches) beginDark(); else endDark();
+      if (mql.matches) {
+        // считаем, что было пересечение порога — запускаем
+        lastBelowExit = false;
+        beginDark();
+      } else {
+        // вернулись в портрет — разрешаем следующий запуск
+        lastBelowExit = true;
+        endDark();
+      }
     });
   }
 
-  // Датчики ориентации — работают даже при замке ориентации экрана
+  // Датчики ориентации — работают даже при замке
   async function enableMotion(){
     if (usingSensors) return;
     try {
@@ -168,23 +184,30 @@
         const res = await DeviceOrientationEvent.requestPermission();
         if (res !== 'granted') return;
       }
-    } catch(e){/* no-op */}
+    } catch(e){}
 
     window.addEventListener('deviceorientation', (e) => {
       if (!activated) return;
 
-      // Используем |gamma| (боковой наклон). Иногда beta тоже двигается — но gamma стабильно
       const g = Math.abs(e.gamma ?? 0);
-      // Экспоненциальное сглаживание, чтобы не дёргалось
+      // экспоненциальное сглаживание, чтобы движения были плавнее
       gFiltered = SMOOTH_ALPHA * g + (1 - SMOOTH_ALPHA) * gFiltered;
 
-      // Гистерезис: если уже тёмно — ждём пока опустится ниже EXIT_DEG
-      if (!isDark) {
-        if (gFiltered >= ENTER_DEG) beginDark();
-      } else {
-        if (gFiltered <= EXIT_DEG) endDark();
-        else holdUntil = Date.now() + MIN_HOLD_MS; // продолжаем продлевать, пока наклон держится
+      if (gFiltered <= EXIT_DEG){
+        // находимся в «стартовой зоне»
+        lastBelowExit = true;
+        if (isDark) endDark(); // когда реально вернулись, запускаем выход
+        return;
       }
+
+      // пересечение порога входа в затемнение: только если были в стартовой зоне
+      if (gFiltered >= ENTER_DEG && lastBelowExit){
+        beginDark();
+        lastBelowExit = false; // чтобы не триггерило постоянно, пока держим наклон
+      }
+
+      // пока держим наклон — продлеваем hold
+      if (isDark) holdUntil = Date.now() + MIN_HOLD_MS;
     }, { passive:true });
 
     usingSensors = true;
