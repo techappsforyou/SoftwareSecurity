@@ -3,15 +3,16 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Angle Privacy Demo</title>
+<title>Angle Privacy — Snap Back to Bright</title>
 <style>
   :root{
-    /* Настроечные параметры — можно менять числами */
-    --dark: rgba(0,0,0,1);          /* полное затемнение */
-    --fadeInMs: 680ms;              /* вход: быстро-плавный (как в ролике) */
-    --fadeOutMs: 160ms;             /* выход: очень быстрый, «ранний» */
-    --easeIn: cubic-bezier(.15,.9,.25,1);  /* быстрый старт + мягкий финиш */
-    --easeOut: cubic-bezier(.3,.1,.3,1);   /* быстрый выход */
+    /* можно подстроить эти параметры под ролик/ощущение */
+    --dark: rgba(0,0,0,1);       /* ПОЛНОЕ затемнение */
+    --fadeInMs: 700ms;           /* плавный, “масляный” вход */
+    --fadeOutMs: 160ms;          /* обычный выход */
+    --fadeOutFastMs: 110ms;      /* быстрый выход при возврате в “те же градусы” */
+    --easeIn: cubic-bezier(.18,.88,.25,1);
+    --easeOut: cubic-bezier(.3,.1,.3,1);
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -39,32 +40,22 @@
   }
   .btn:active{ transform: translateY(1px) }
 
-  /* Чистый чёрный оверлей без надписей/вспышек */
+  /* Чистый чёрный оверлей — без текста/вспышек/блюра, чтобы не просвечивало */
   .overlay{
     position:fixed; inset:0; display:none; z-index:9999;
     background: rgba(0,0,0,0);
-    touch-action:none; pointer-events:auto;   /* блокируем взаимодействия сбоку */
-    -webkit-backdrop-filter: none; backdrop-filter: none; /* без блюра, чтобы не «светило» */
+    pointer-events:auto; touch-action:none;
     will-change: background;
   }
   .overlay.visible{ display:block; }
 
-  @keyframes fadeToDark {
-    from { background: rgba(0,0,0,0); }
-    to   { background: var(--dark); }
-  }
-  @keyframes darkToClear {
-    from { background: var(--dark); }
-    to   { background: rgba(0,0,0,0); }
-  }
-  .overlay.fade-in  { animation: fadeToDark var(--fadeInMs) var(--easeIn) forwards; }
-  .overlay.hold     { background: var(--dark); }
-  .overlay.fade-out { animation: darkToClear var(--fadeOutMs) var(--easeOut) forwards; }
+  @keyframes fadeToDark { from { background: rgba(0,0,0,0); } to { background: var(--dark); } }
+  @keyframes darkToClear{ from { background: var(--dark); }    to { background: rgba(0,0,0,0); } }
 
-  /* На всякий случай — если ориентация меняется системно, тоже поддержим */
-  @media (orientation: landscape){
-    body.activated .fallback-landscape .overlay { display:block; background: var(--dark); }
-  }
+  .overlay.fade-in        { animation: fadeToDark var(--fadeInMs) var(--easeIn) forwards; }
+  .overlay.hold           { background: var(--dark); }
+  .overlay.fade-out       { animation: darkToClear var(--fadeOutMs) var(--easeOut) forwards; }
+  .overlay.fade-out-fast  { animation: darkToClear var(--fadeOutFastMs) linear forwards; }
 </style>
 </head>
 <body>
@@ -79,84 +70,98 @@
   const overlay = document.getElementById('overlay');
   const btn = document.getElementById('activate');
 
-  /* --- Настройки поведения --- */
-  const ENTER_DEG = 28;   // Триггер «сбоку» (раньше можно поставить 20–24)
-  const EXIT_DEG  = 16;   // Ранний выход, чтобы быстро светлело
-  const MIN_HOLD_MS = 120; // Минимально держим тьму (помогает от дрожи)
-  const SMOOTH_ALPHA = 0.20; // сглаживание (0..1) — больше = быстрее реагирует
+  /* === Настройки поведения ===
+     ENTER_DEG: при каком Δугле от “прямого взгляда” начинать затемнять.
+     RETURN_TOL: окно “те же градусы” вокруг базовой позы — быстрый выход.
+     EXIT_DEG: обычный порог выхода, если не попали прямо в RETURN_TOL.
+  */
+  const ENTER_DEG   = 24;  // старт затемнения раньше (можно 20–28)
+  const RETURN_TOL  = 8;   // “вернулся в те же градусы” → быстрый выход
+  const EXIT_DEG    = 14;  // обычный ранний выход (гистерезис)
+  const SMOOTH_ALPHA = 0.22; // сглаживание датчика (0..1) — больше = быстрее
+
+  // минимальная защита от дрожи, чтобы не мигало при «границе»
+  const MIN_HOLD_MS = 80;
 
   let activated = false;
   let usingSensors = false;
 
-  // Калибровка «прямого взгляда» (учитывает чехол, посадку, привычку держать)
-  let baselineGamma = 0;        // базовый боковой угол в момент активации
-  let needCalibrate = false;    // флаг: взять baseline при первом событии
-  let gFiltered = 0;            // сглаженный |gamma - baseline|
+  // калибровка “прямого взгляда”
+  let baselineGamma = 0;     // базовый |gamma| при нажатии кнопки
+  let needCalibrate = false; // взять baseline с первого event после активации
 
-  // Состояние затемнения
+  // сглаженное “насколько мы сбоку” относительно базового
+  let gFiltered = 0;
+
+  // состояние затемнения
   let isDark = false;
   let holdUntil = 0;
   let hideTimer = null;
 
   btn.addEventListener('click', async () => {
     activated = true;
-    document.body.classList.add('activated');
-    needCalibrate = true;       // возьмём базовый угол с первого события датчика
+    needCalibrate = true;     // возьмём базовый угол на первом событии
     await enableMotion();
   });
 
-  /* === Основная логика === */
-  function beginDark() {
+  /* === Логика анимаций === */
+  function beginDark(){
     clearTimeout(hideTimer);
-
-    // перезапустить входную анимацию надёжно
+    // перезапуск входной анимации
     overlay.className = 'overlay visible';
     void overlay.offsetWidth;
     overlay.classList.add('fade-in');
-
-    holdUntil = Date.now() + MIN_HOLD_MS;
     isDark = true;
+    holdUntil = Date.now() + MIN_HOLD_MS;
 
     overlay.addEventListener('animationend', function onIn(e){
       if (e.animationName !== 'fadeToDark') return;
       overlay.removeEventListener('animationend', onIn);
       overlay.classList.remove('fade-in');
-      overlay.classList.add('hold'); // остаёмся тёмными, пока не решим выйти
+      overlay.classList.add('hold');
     }, { once:true });
   }
 
-  function endDark() {
+  function endDark(fast=false){
     const left = holdUntil - Date.now();
-    if (left > 0) {
+    if (left > 0){
       clearTimeout(hideTimer);
-      hideTimer = setTimeout(endDark, left + 10);
+      hideTimer = setTimeout(() => endDark(fast), left + 8);
       return;
     }
-    overlay.classList.remove('hold');
-    overlay.classList.add('fade-out');
+    overlay.classList.remove('hold','fade-in','fade-out','fade-out-fast');
+    overlay.classList.add(fast ? 'fade-out-fast' : 'fade-out');
     overlay.addEventListener('animationend', function onOut(e){
       if (e.animationName !== 'darkToClear') return;
       overlay.removeEventListener('animationend', onOut);
-      overlay.classList.remove('fade-out','visible');
+      overlay.classList.remove('fade-out','fade-out-fast','visible');
+      isDark = false;
     }, { once:true });
-    isDark = false;
   }
 
-  function deltaGammaFromBaseline(rawGamma){
-    const gAbs = Math.abs(rawGamma ?? 0);
-    return Math.abs(gAbs - baselineGamma);
+  /* === Помощники === */
+  const abs = Math.abs;
+
+  function deltaFromBaseline(rawGamma){
+    const gAbs = abs(rawGamma ?? 0);
+    return abs(gAbs - baselineGamma);
   }
 
-  // Фолбэк: если системная ориентация меняется (без датчиков)
-  if (window.matchMedia) {
+  function inReturnZone(deltaRaw){
+    // «почти те же градусы», без сглаживания — чтобы выход был мгновенный
+    return deltaRaw <= RETURN_TOL;
+  }
+
+  /* === Фолбэк на системную ориентацию (если вдруг датчиков нет) === */
+  if (window.matchMedia){
     const mql = matchMedia('(orientation: landscape)');
     mql.addEventListener?.('change', () => {
       if (!activated) return;
-      // Делаем поведение «как сбоку»: в лендскейпе затемняем, в портрете — светло
-      if (mql.matches) beginDark(); else endDark();
+      if (mql.matches) beginDark(); else endDark(true);
     });
   }
 
+  /* === Датчики ориентации === */
   async function enableMotion(){
     if (usingSensors) return;
     try {
@@ -165,30 +170,36 @@
         const res = await DeviceOrientationEvent.requestPermission();
         if (res !== 'granted') return;
       }
-    } catch(e){ /* ignore */ }
+    } catch(e){}
 
     window.addEventListener('deviceorientation', (e) => {
       if (!activated) return;
 
-      // Берём базу на первом событии после нажатия
-      if (needCalibrate) {
-        baselineGamma = Math.abs(e.gamma ?? 0);
+      const rawGamma = e.gamma;
+      const deltaRaw = deltaFromBaseline(rawGamma);
+
+      // первая калибровка под твоё «прямо»
+      if (needCalibrate){
+        baselineGamma = abs(rawGamma ?? 0);
         needCalibrate = false;
-        gFiltered = 0; // старт «прямо»
+        gFiltered = 0;
       }
 
-      const delta = deltaGammaFromBaseline(e.gamma);
-      // экспоненциальное сглаживание (меньше дёрганий, плавнее анимация)
-      gFiltered = SMOOTH_ALPHA * delta + (1 - SMOOTH_ALPHA) * gFiltered;
+      // плавное сглаживание для входа/выхода по порогам
+      gFiltered = SMOOTH_ALPHA * deltaRaw + (1 - SMOOTH_ALPHA) * gFiltered;
 
-      if (!isDark) {
-        if (gFiltered >= ENTER_DEG) {
-          beginDark(); // войти быстро и плавно
-        }
-      } else {
-        // пока «сбоку» — держим минимум, но выходим рано, как только вернулись
-        holdUntil = Date.now() + MIN_HOLD_MS;
-        if (gFiltered <= EXIT_DEG) endDark();
+      // 1) Приоритет: вернулся “в те же градусы” → быстрый выход
+      if (isDark && inReturnZone(deltaRaw)){
+        endDark(true); // очень быстрый выход
+        return;
+      }
+
+      // 2) Обычная логика с гистерезисом и мягкими порогами
+      if (!isDark){
+        if (gFiltered >= ENTER_DEG) beginDark();
+      }else{
+        holdUntil = Date.now() + MIN_HOLD_MS; // защита от дрожи
+        if (gFiltered <= EXIT_DEG) endDark(false);
       }
     }, { passive:true });
 
