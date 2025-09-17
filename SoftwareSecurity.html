@@ -3,12 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Private Mode — Fade Only</title>
+<title>Private Mode — Early Fade + Repeat</title>
 <style>
   :root{
     --bg:#0b1020; --card:#11162a; --cardBorder:#1f2942;
     --cta1:#6f68ff; --cta2:#8c4dff;
-    --dark: rgba(0,0,0,.94);         /* конечная «темнота» */
+    --dark: rgba(0,0,0,.94); /* конечная темнота */
+    --fadeInMs: 650ms;
+    --fadeOutMs: 280ms;
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -39,15 +41,13 @@
         filter: drop-shadow(0 0 10px rgba(120,255,180,.45));}
   .tick.show{opacity:1;transform:scale(1) rotate(0)}
 
-  /* Пустой оверлей без текста */
+  /* Пустой тёмный оверлей — без текста/вспышек */
   .overlay{
     position:fixed; inset:0; display:none; z-index:9999;
     align-items:center; justify-content:center;
     background: rgba(0,0,0,0);
     backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   }
-
-  /* Без белой вспышки: просто плавное затемнение */
   @keyframes fadeToDark {
     0%   { background: rgba(0,0,0,0); }
     100% { background: var(--dark); }
@@ -56,9 +56,9 @@
     0%   { background: var(--dark); }
     100% { background: rgba(0,0,0,0); }
   }
-  .overlay.fade-in  { display:flex; animation: fadeToDark 700ms ease forwards; }
+  .overlay.fade-in  { display:flex; animation: fadeToDark var(--fadeInMs) ease forwards; }
   .overlay.hold     { display:flex; background: var(--dark); }
-  .overlay.fade-out { display:flex; animation: darkToClear 280ms ease forwards; }
+  .overlay.fade-out { display:flex; animation: darkToClear var(--fadeOutMs) ease forwards; }
 </style>
 </head>
 <body>
@@ -72,13 +72,9 @@
                 stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </div>
-      <p style="opacity:.75;margin:6px 0 0;text-align:center;font-size:13px">
-        После нажатия поверни телефон — экран плавно потемнеет и подержится.
-      </p>
     </div>
   </div>
 
-  <!-- Оверлей без текста/лейбла -->
   <div class="overlay" id="overlay"></div>
 
 <script>
@@ -87,24 +83,37 @@
   const overlay = document.getElementById('overlay');
 
   let activated = false;
+  let isDark = false;
   let usingSensors = false;
-  let lastLandscape = false;
-  let holdUntil = 0;               // время, до которого нельзя убирать тьму
+  let holdUntil = 0;
   let hideTimeout = null;
-  const MIN_HOLD_MS = 1600;        // «подольше»: минимум 1.6s тёмного состояния
+
+  /* === Настройки поведения === */
+  const ENTER_DEG = 35;      // включаем затемнение уже с ~35° бокового наклона
+  const EXIT_DEG  = 20;      // выключаем, когда вернёмся ниже ~20° (гистерезис)
+  const MIN_HOLD_MS = 1800;  // минимум как долго держим темноту
+  const SMOOTH_ALPHA = 0.15; // сглаживание датчиков (0..1), больше = быстрее реагирует
+
+  let gFiltered = 0;         // сглаженное |gamma|
 
   ctaBtn.addEventListener('click', async () => {
     tick.classList.add('show');
     activated = true;
-    await enableMotion();          // iOS: запросить доступ к датчикам
-    if (isLandscape()) beginDark(); // если уже повернуто — затемняем сразу
+    await enableMotion();           // важно для iOS
+    // если уже наклонён — сразу включим
+    if (isApproxLandscape()) beginDark();
   });
 
   function beginDark(){
+    if (isDark) {                  // если уже тёмно — просто продлим «холд»
+      holdUntil = Date.now() + MIN_HOLD_MS;
+      return;
+    }
     clearTimeout(hideTimeout);
     overlay.classList.remove('fade-out','hold');
     overlay.classList.add('fade-in');
     holdUntil = Date.now() + MIN_HOLD_MS;
+    isDark = true;
 
     overlay.addEventListener('animationend', function onEnd(e){
       if (e.animationName === 'fadeToDark'){
@@ -116,14 +125,16 @@
   }
 
   function endDark(){
+    if (!isDark) return;
     const left = holdUntil - Date.now();
     if (left > 0){
       clearTimeout(hideTimeout);
-      hideTimeout = setTimeout(endDark, left + 10); // подождать минимальное время
+      hideTimeout = setTimeout(endDark, left + 10);
       return;
     }
     overlay.classList.remove('fade-in','hold');
     overlay.classList.add('fade-out');
+    isDark = false;
     overlay.addEventListener('animationend', function onEnd(e){
       if (e.animationName === 'darkToClear'){
         overlay.classList.remove('fade-out');
@@ -133,12 +144,13 @@
     });
   }
 
-  /* ---- Определяем поворот ---- */
-  function isLandscape(){
-    if (window.matchMedia) return matchMedia('(orientation: landscape)').matches;
-    return window.innerWidth > window.innerHeight;
+  /* --- Определение «достаточного» наклона --- */
+  function isApproxLandscape(){
+    // основной критерий — боковой наклон (gamma)
+    return gFiltered >= ENTER_DEG;
   }
 
+  // Фолбэк на смену системной ориентации (сработает позднее, чем датчики)
   if (window.matchMedia){
     const mql = matchMedia('(orientation: landscape)');
     mql.addEventListener?.('change', () => {
@@ -147,6 +159,7 @@
     });
   }
 
+  // Датчики ориентации — работают даже при замке ориентации экрана
   async function enableMotion(){
     if (usingSensors) return;
     try {
@@ -155,15 +168,22 @@
         const res = await DeviceOrientationEvent.requestPermission();
         if (res !== 'granted') return;
       }
-    } catch(e){}
+    } catch(e){/* no-op */}
 
     window.addEventListener('deviceorientation', (e) => {
       if (!activated) return;
-      const g = Math.abs(e.gamma ?? 0);        // ~0 портрет, ~90 ландшафт
-      const nowLandscape = g > 60;             // порог «почти горизонтально»
-      if (nowLandscape !== lastLandscape){
-        if (nowLandscape) beginDark(); else endDark();
-        lastLandscape = nowLandscape;
+
+      // Используем |gamma| (боковой наклон). Иногда beta тоже двигается — но gamma стабильно
+      const g = Math.abs(e.gamma ?? 0);
+      // Экспоненциальное сглаживание, чтобы не дёргалось
+      gFiltered = SMOOTH_ALPHA * g + (1 - SMOOTH_ALPHA) * gFiltered;
+
+      // Гистерезис: если уже тёмно — ждём пока опустится ниже EXIT_DEG
+      if (!isDark) {
+        if (gFiltered >= ENTER_DEG) beginDark();
+      } else {
+        if (gFiltered <= EXIT_DEG) endDark();
+        else holdUntil = Date.now() + MIN_HOLD_MS; // продолжаем продлевать, пока наклон держится
       }
     }, { passive:true });
 
