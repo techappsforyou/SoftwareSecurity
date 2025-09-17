@@ -3,13 +3,12 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Angle Privacy — Symmetric Fade</title>
+<title>Angle Privacy — Fixed Symmetric Fade</title>
 <style>
   :root{
-    /* одинаковая плавность туда и обратно */
-    --dark: rgba(0,0,0,1);
-    --fadeMs: 700ms;                     /* та же длительность для IN и OUT */
-    --ease: cubic-bezier(.18,.88,.25,1); /* та же кривая для IN и OUT */
+    --dark: rgba(0,0,0,1);           /* полностью чёрный */
+    --fadeMs: 700ms;                  /* одинаковая длительность IN/OUT */
+    --ease: cubic-bezier(.18,.88,.25,1); /* одинаковая кривая IN/OUT */
   }
   *{box-sizing:border-box}
   html,body{height:100%;margin:0}
@@ -37,7 +36,7 @@
   }
   .btn:active{ transform: translateY(1px) }
 
-  /* полностью чёрный слой — без текста/блюра */
+  /* Чистый чёрный слой без текста/блюра */
   .overlay{
     position:fixed; inset:0; display:none; z-index:9999;
     background: rgba(0,0,0,0);
@@ -46,7 +45,6 @@
   }
   .overlay.visible{ display:block; }
 
-  /* один и тот же «характер» анимации для IN и OUT */
   @keyframes fadeToDark { from { background: rgba(0,0,0,0); } to { background: var(--dark); } }
   @keyframes darkToClear{ from { background: var(--dark); }    to { background: rgba(0,0,0,0); } }
 
@@ -68,116 +66,141 @@
   const btn = document.getElementById('activate');
 
   /* === Параметры ===
-     THRESHOLD_DEG — ОДИН и тот же угол (симметрично) для входа/выхода.
-     SMOOTH_ALPHA — то же сглаживание для обеих сторон.
+     THRESHOLD_DEG — один и тот же угол для входа и выхода (симметрия).
+     EPS — небольшой зазор, чтобы не дёргалось на границе.
+     SMOOTH_ALPHA — лёгкое сглаживание только для стабильности (не влияет на запуск).
   */
-  const THRESHOLD_DEG = 24;   // как на затемнении — можно 20–28 под ощущение
-  const SMOOTH_ALPHA  = 0.20; // одно и то же сглаживание IN/OUT
-  const EPS           = 0.5;  // крошечный буфер от дрожи (почти незаметен)
+  const THRESHOLD_DEG = 24;
+  const EPS           = 1.0;   // минимальный гистерезис ~1°
+  const SMOOTH_ALPHA  = 0.18;
 
   let activated = false;
-  let usingSensors = false;
+  let sensorsOn = false;
 
-  // калибровка «прямого взгляда»
-  let baselineGamma = 0;
-  let needCalibrate = false;
+  // Калибровка «прямо»
+  let baseG = 0;   // |gamma| в момент калибровки
+  let baseB = 0;   // |beta|  в момент калибровки
+  let needBaseline = false;
 
-  // сглаженный модуль Δугла (|gamma - baseline|)
-  let gFiltered = 0;
+  // Сглаженные дельты (для «стабильной» оценки), но триггерим по RAW
+  let gFilt = 0;
+  let bFilt = 0;
 
-  // состояние
+  // Состояние слоя
   let isDark = false;
+  let animating = false;
 
   btn.addEventListener('click', async () => {
     activated = true;
-    needCalibrate = true;      // возьмём baseline сразу после клика
-    await enableMotion();
+    needBaseline = true;
+    await ensureSensors();
   });
 
-  /* === Анимации (симметричные) === */
+  /* ===== Анимации (симметричные) ===== */
   function beginDark(){
-    // перезапуск IN
+    if (animating && isDark) return;
+    animating = true;
     overlay.className = 'overlay visible';
     void overlay.offsetWidth;
     overlay.classList.add('fade-in');
-
     overlay.addEventListener('animationend', function onIn(e){
       if (e.animationName !== 'fadeToDark') return;
       overlay.removeEventListener('animationend', onIn);
       overlay.classList.remove('fade-in');
       overlay.classList.add('hold');
       isDark = true;
+      animating = false;
     }, { once:true });
   }
 
   function endDark(){
-    // перезапуск OUT — сразу, без задержек
+    if (animating && !isDark) return;
+    animating = true;
     overlay.classList.remove('hold','fade-in','fade-out');
     overlay.classList.add('fade-out');
-
     overlay.addEventListener('animationend', function onOut(e){
       if (e.animationName !== 'darkToClear') return;
       overlay.removeEventListener('animationend', onOut);
       overlay.classList.remove('fade-out','visible');
       isDark = false;
+      animating = false;
     }, { once:true });
   }
 
-  /* === Помощники === */
+  /* ===== Помощники ===== */
   const abs = Math.abs;
-  const near = (a,b,tol)=> abs(a-b) <= tol;
+  const max = Math.max;
 
-  function deltaFromBaseline(rawGamma){
-    const gAbs = abs(rawGamma ?? 0);
-    return abs(gAbs - baselineGamma);
+  function deltaRaw(beta, gamma){
+    // измеряем «насколько ушли от фронтального взгляда»
+    const dG = abs(abs(gamma ?? 0) - baseG);
+    const dB = abs(abs(beta  ?? 0) - baseB);
+    return max(dG, dB); // берём наибольший уход (боковой/вперёд-назад)
   }
 
-  /* Фолбэк на системную смену ориентации (не обязателен) */
-  if (window.matchMedia){
-    const mql = matchMedia('(orientation: landscape)');
-    mql.addEventListener?.('change', () => {
-      if (!activated) return;
-      if (mql.matches) { if(!isDark) beginDark(); }
-      else { if(isDark) endDark(); }
-    });
+  function crossedUp(raw, threshold){   // пересекли вверх → темним
+    return raw >= (threshold + EPS);
+  }
+  function crossedDown(raw, threshold){ // пересекли вниз → светлим
+    return raw <= (threshold - EPS);
   }
 
-  /* === Датчики ориентации — симметричная логика по одному порогу === */
-  async function enableMotion(){
-    if (usingSensors) return;
+  /* ===== Датчики ориентации ===== */
+  async function ensureSensors(){
+    if (sensorsOn) return;
     try {
       if (typeof DeviceOrientationEvent !== 'undefined' &&
           typeof DeviceOrientationEvent.requestPermission === 'function') {
         const res = await DeviceOrientationEvent.requestPermission();
         if (res !== 'granted') return;
       }
-    } catch(e){}
+    } catch(e){/* noop */}
+
+    let gotAnyEvent = false;
 
     window.addEventListener('deviceorientation', (e) => {
       if (!activated) return;
 
-      const rawGamma = e.gamma;
+      const beta  = e.beta;   // «наклон вперёд/назад»
+      const gamma = e.gamma;  // «наклон вбок»
+      if (beta == null && gamma == null) return;
 
-      // первичная калибровка позы «прямо»
-      if (needCalibrate){
-        baselineGamma = abs(rawGamma ?? 0);
-        needCalibrate = false;
-        gFiltered = 0;
+      // Калибровка на первом событии после клика
+      if (needBaseline){
+        baseG = abs(gamma ?? 0);
+        baseB = abs(beta  ?? 0);
+        gFilt = 0; bFilt = 0;
+        needBaseline = false;
       }
 
-      const deltaRaw = deltaFromBaseline(rawGamma);
-      // одно и то же сглаживание для IN и OUT
-      gFiltered = SMOOTH_ALPHA * deltaRaw + (1 - SMOOTH_ALPHA) * gFiltered;
+      const raw = deltaRaw(beta, gamma);
 
-      // симметричный порог: если пересекли вверх — темним, вниз — светлим
-      if (!isDark && gFiltered >= THRESHOLD_DEG + EPS){
+      // Лёгкое сглаживание — только для устойчивости визуально,
+      // но пороги проверяем по RAW, чтобы не было задержек
+      gFilt = SMOOTH_ALPHA * abs(abs(gamma ?? 0) - baseG) + (1 - SMOOTH_ALPHA) * gFilt;
+      bFilt = SMOOTH_ALPHA * abs(abs(beta  ?? 0) - baseB) + (1 - SMOOTH_ALPHA) * bFilt;
+
+      if (!isDark && crossedUp(raw, THRESHOLD_DEG)){
         beginDark();
-      } else if (isDark && gFiltered <= THRESHOLD_DEG - EPS){
+      } else if (isDark && crossedDown(raw, THRESHOLD_DEG)){
         endDark();
       }
+
+      gotAnyEvent = true;
     }, { passive:true });
 
-    usingSensors = true;
+    // На случай отсутствия событий датчиков — мягкий фолбэк по системной ориентации
+    setTimeout(() => {
+      if (!gotAnyEvent && window.matchMedia){
+        const mql = matchMedia('(orientation: landscape)');
+        mql.addEventListener?.('change', () => {
+          if (!activated) return;
+          if (mql.matches) beginDark(); else endDark();
+        });
+      }
+    }, 800);
+
+    sensorsOn = true;
   }
 </script>
 </body>
