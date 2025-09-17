@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Flash Darken (Blink) Demo</title>
+<style>
+  :root{
+    --bg:#0b1020; --card:#11162a; --cardBorder:#1f2942;
+    --cta1:#6f68ff; --cta2:#8c4dff;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    background: radial-gradient(1200px 900px at 50% -10%, #1b2344 0%, var(--bg) 55%);
+    color:#e7ecf3; -webkit-tap-highlight-color: transparent;
+  }
+  .wrap{min-height:100%;display:grid;place-items:center;padding:28px}
+  .card{
+    width:min(480px,92vw);
+    border:1px solid var(--cardBorder);
+    background: linear-gradient(180deg,#141b33 0%, var(--card) 100%);
+    border-radius:22px; padding:26px 22px 28px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.45);
+  }
+  h1{margin:0 0 16px; font-size:22px; font-weight:800; text-align:center}
+
+  .btn{
+    -webkit-appearance:none; appearance:none; border:0; cursor:pointer; width:100%;
+    padding:14px 18px; border-radius:16px; font-weight:800; letter-spacing:.4px;
+    color:#fff; background: linear-gradient(90deg,var(--cta1),var(--cta2));
+    box-shadow: 0 0 32px rgba(143,109,255,.35);
+  }
+  .btn:active{transform:translateY(1px)}
+
+  .check{display:grid;place-items:center;height:42px;margin-top:16px}
+  .tick{width:30px;height:30px;opacity:0;transform:scale(.6) rotate(-8deg);
+        transition:opacity .24s ease, transform .24s ease;
+        filter: drop-shadow(0 0 10px rgba(120,255,180,.45));}
+  .tick.show{opacity:1;transform:scale(1) rotate(0)}
+
+  /* Оверлей, который будет "мигать" и затем оставаться тёмным */
+  .overlay{
+    position:fixed; inset:0; display:none; z-index:9999;
+    align-items:center; justify-content:center;
+    color:#fff; font:600 16px/1.4 system-ui;
+    backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  }
+  .overlay__msg{opacity:.9}
+
+  /* Кадровая анимация "мигания" в тьму */
+  @keyframes flashToDark {
+    0%   { background: rgba(255,255,255,0); }
+    10%  { background: rgba(255,255,255,.55); }   /* короткая вспышка */
+    35%  { background: rgba(0,0,0,.35); }
+    100% { background: rgba(0,0,0,.92); }         /* остаётся тёмным */
+  }
+  /* Анимация выхода (чуть "пульснёт" и исчезнет) */
+  @keyframes darkToClear {
+    0%   { background: rgba(0,0,0,.92); }
+    20%  { background: rgba(255,255,255,.20); }   /* лёгкий отблеск */
+    100% { background: rgba(255,255,255,0); }
+  }
+
+  .overlay.blink-in {
+    display:flex;
+    animation: flashToDark 300ms ease forwards;
+  }
+  .overlay.blink-out {
+    display:flex;
+    animation: darkToClear 240ms ease forwards;
+  }
+
+  /* Автопоказ в ландшафте через CSS — только если активировано */
+  @media (orientation: landscape){
+    body.activated .overlay.stay-dark{ display:flex; background:rgba(0,0,0,.92); }
+    body.activated .wrap{ pointer-events:none }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Private Mode</h1>
+      <button class="btn" id="ctaBtn">GET INSIGHTS</button>
+      <div class="check">
+        <svg class="tick" id="tick" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M20 7L10 17l-6-6" stroke="#9affc9" stroke-width="3"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <p style="opacity:.75;margin:6px 0 0;text-align:center;font-size:13px">
+        После нажатия поверни телефон — будет быстрый «флэш» и затемнение.
+      </p>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay"><div class="overlay__msg">Rotate back to portrait</div></div>
+
+<script>
+  const ctaBtn = document.getElementById('ctaBtn');
+  const tick   = document.getElementById('tick');
+  const overlay= document.getElementById('overlay');
+
+  let activated = false;      // включается после нажатия
+  let usingSensors = false;
+  let lastLandscape = false;
+
+  // Вспомогательные функции мигания
+  function blinkToDark() {
+    overlay.classList.remove('blink-out','stay-dark');
+    overlay.classList.add('blink-in');
+    overlay.addEventListener('animationend', function onEnd(e){
+      if(e.animationName === 'flashToDark'){
+        overlay.classList.remove('blink-in');
+        overlay.classList.add('stay-dark'); // остаёмся в темноте
+      }
+      overlay.removeEventListener('animationend', onEnd);
+    });
+  }
+  function blinkOut() {
+    overlay.classList.remove('blink-in','stay-dark');
+    overlay.classList.add('blink-out');
+    overlay.addEventListener('animationend', function onEnd(e){
+      if(e.animationName === 'darkToClear'){
+        overlay.classList.remove('blink-out');
+        overlay.style.display = 'none';
+      }
+      overlay.removeEventListener('animationend', onEnd);
+    });
+  }
+
+  // Активируем режим по клику
+  ctaBtn.addEventListener('click', async () => {
+    tick.classList.add('show');
+    activated = true;
+    document.body.classList.add('activated');
+    await enableMotion();          // попросим доступ к датчикам на iOS (если нужно)
+    // если уже в ландшафте — сразу мигаем
+    if (isLandscape()) blinkToDark();
+  });
+
+  // Детектор ориентации (оба пути — CSS и датчики)
+  function isLandscape() {
+    if (window.matchMedia) return matchMedia('(orientation: landscape)').matches;
+    return window.innerWidth > window.innerHeight;
+  }
+
+  // Следим за сменой CSS-ориентации (когда замок ориентации выключен)
+  if (window.matchMedia){
+    const mql = matchMedia('(orientation: landscape)');
+    mql.addEventListener?.('change', () => {
+      if (!activated) return;
+      if (mql.matches) blinkToDark(); else blinkOut();
+    });
+  }
+
+  // Поддержка датчиков — сработает даже при замке ориентации
+  async function enableMotion(){
+    if (usingSensors) return;
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const res = await DeviceOrientationEvent.requestPermission();
+        if (res !== 'granted') return;
+      }
+    } catch(e){ /* игнор */ }
+
+    window.addEventListener('deviceorientation', (e) => {
+      if (!activated) return;
+      const g = Math.abs(e.gamma ?? 0);   // ~0 портрет, ~90 ландшафт
+      const nowLandscape = g > 60;
+      if (nowLandscape !== lastLandscape){
+        if (nowLandscape) blinkToDark(); else blinkOut();
+        lastLandscape = nowLandscape;
+      }
+    }, { passive:true });
+
+    usingSensors = true;
+  }
+</script>
+</body>
+</html>
